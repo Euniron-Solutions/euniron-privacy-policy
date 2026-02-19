@@ -184,7 +184,7 @@ The Data Use Policy document addresses the following areas required by Meta for 
 6th Parklands Road, Office Suites A10
 Nairobi, Kenya
 
-**Privacy Contact:** privacy@eunironsolutions.co.ke
+**Privacy Contact:** info@eunironsolutions.co.ke
 
 ---
 
