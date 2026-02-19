@@ -10,7 +10,6 @@
   // Configuration
   // =========================================
   var PDF_URL = 'data-use-policy.pdf';
-  var INITIAL_SCALE = 1.5;
   var SCALE_STEP = 0.25;
   var MIN_SCALE = 0.5;
   var MAX_SCALE = 3.0;
@@ -20,8 +19,11 @@
   // =========================================
   var pdfDoc = null;
   var currentPage = 1;
-  var currentScale = INITIAL_SCALE;
+  var currentScale = 1.5;
+  var baseScale = 1.5;
+  var userZoom = 0; // tracks manual zoom steps from fit-to-width
   var rendering = false;
+  var renderQueued = false;
 
   // =========================================
   // DOM Elements
@@ -40,10 +42,30 @@
   var errorState = document.getElementById('errorState');
 
   // =========================================
+  // Fit-to-width scale calculation
+  // =========================================
+  function calcFitScale(page) {
+    // Get available width inside the canvas wrapper (minus padding)
+    var wrapperStyle = window.getComputedStyle(canvasWrapper);
+    var paddingLeft = parseFloat(wrapperStyle.paddingLeft) || 0;
+    var paddingRight = parseFloat(wrapperStyle.paddingRight) || 0;
+    var availableWidth = canvasWrapper.clientWidth - paddingLeft - paddingRight;
+
+    // Get the page's natural width at scale 1.0
+    var defaultViewport = page.getViewport({ scale: 1.0 });
+    var fitScale = availableWidth / defaultViewport.width;
+
+    return fitScale;
+  }
+
+  // =========================================
   // PDF Rendering
   // =========================================
   function renderPage(num) {
-    if (rendering) return;
+    if (rendering) {
+      renderQueued = true;
+      return;
+    }
     rendering = true;
 
     pdfDoc.getPage(num).then(function (page) {
@@ -65,6 +87,12 @@
       page.render(renderContext).promise.then(function () {
         rendering = false;
         updateUI();
+
+        // If a render was queued while we were busy, do it now
+        if (renderQueued) {
+          renderQueued = false;
+          renderPage(currentPage);
+        }
       });
     });
   }
@@ -72,7 +100,11 @@
   function updateUI() {
     pageNumEl.textContent = currentPage;
     pageCountEl.textContent = pdfDoc.numPages;
-    zoomLevelEl.textContent = Math.round(currentScale * 100) + '%';
+
+    // Show zoom relative to fit-width (so fit = 100%)
+    var displayPercent = Math.round((currentScale / baseScale) * 100);
+    zoomLevelEl.textContent = displayPercent + '%';
+
     prevBtn.disabled = currentPage <= 1;
     nextBtn.disabled = currentPage >= pdfDoc.numPages;
     zoomInBtn.disabled = currentScale >= MAX_SCALE;
@@ -114,13 +146,15 @@
 
   zoomInBtn.addEventListener('click', function () {
     if (currentScale >= MAX_SCALE) return;
-    currentScale = Math.min(MAX_SCALE, currentScale + SCALE_STEP);
+    userZoom++;
+    currentScale = Math.min(MAX_SCALE, baseScale + (userZoom * SCALE_STEP));
     renderPage(currentPage);
   });
 
   zoomOutBtn.addEventListener('click', function () {
     if (currentScale <= MIN_SCALE) return;
-    currentScale = Math.max(MIN_SCALE, currentScale - SCALE_STEP);
+    userZoom--;
+    currentScale = Math.max(MIN_SCALE, baseScale + (userZoom * SCALE_STEP));
     renderPage(currentPage);
   });
 
@@ -151,6 +185,20 @@
     }
   });
 
+  // Recalculate fit-to-width on window resize
+  var resizeTimer;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      if (!pdfDoc) return;
+      pdfDoc.getPage(currentPage).then(function (page) {
+        baseScale = calcFitScale(page);
+        currentScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, baseScale + (userZoom * SCALE_STEP)));
+        renderPage(currentPage);
+      });
+    }, 200);
+  });
+
   // =========================================
   // Initialize
   // =========================================
@@ -164,7 +212,13 @@
     .promise.then(function (pdf) {
       pdfDoc = pdf;
       showViewer();
-      renderPage(currentPage);
+
+      // Calculate fit-to-width scale from page 1
+      pdf.getPage(1).then(function (page) {
+        baseScale = calcFitScale(page);
+        currentScale = baseScale;
+        renderPage(currentPage);
+      });
     })
     .catch(function (err) {
       console.error('PDF load error:', err);
